@@ -68,6 +68,12 @@ jobs:
       - name: Install dependencies
         working-directory: source
         run: npm ci
+      - name: Static checks
+        working-directory: source
+        run: |
+          npm run format:check
+          npm run lint
+          npm run check:contracts
       - name: Configure public download addresses
         run: node scripts/prepare-source.cjs source
       - name: Check source and packages
@@ -99,6 +105,14 @@ jobs:
           xvfb-run -a npm run smoke
           xvfb-run -a npm run smoke -- --smoke-performance
           xvfb-run -a npm run smoke -- --smoke-auto-update
+      - name: Windows packaged startup
+        if: runner.os == 'Windows'
+        working-directory: source
+        shell: pwsh
+        run: |
+          $runner = (Resolve-Path test/smoke/runner.js).Path
+          $process = Start-Process -FilePath dist/win-unpacked/Collectify.exe -ArgumentList '--smoke-test','--smoke-startup',"--smoke-runner=`"$runner`"" -WindowStyle Hidden -PassThru -Wait
+          if ($process.ExitCode -ne 0) { exit 1 }
       - uses: actions/upload-artifact@v4
         with:
           name: collectify-${{ matrix.platform }}
