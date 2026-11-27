@@ -93,6 +93,7 @@ jobs:
         if: runner.os == 'Linux'
         working-directory: source
         run: |
+          npx install-electron --no
           sudo chown root:root node_modules/electron/dist/chrome-sandbox
           sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
           xvfb-run -a npm run smoke
