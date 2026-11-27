@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       source_sha:
-        description: Full 40-character commit SHA from sunycoder/Collectify
+        description: Full 40-character commit SHA from sunycoder/Collectify-source
         required: true
         type: string
       mode:
@@ -57,7 +57,7 @@ jobs:
           persist-credentials: false
       - uses: actions/checkout@v4
         with:
-          repository: sunycoder/Collectify
+          repository: sunycoder/Collectify-source
           ref: ${{ inputs.source_sha }}
           token: ${{ secrets.SOURCE_READ_TOKEN }}
           persist-credentials: false
@@ -137,7 +137,7 @@ jobs:
           persist-credentials: false
       - uses: actions/checkout@v4
         with:
-          repository: sunycoder/Collectify
+          repository: sunycoder/Collectify-source
           ref: ${{ inputs.source_sha }}
           token: ${{ secrets.SOURCE_READ_TOKEN }}
           persist-credentials: false
