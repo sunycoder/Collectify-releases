@@ -1,0 +1,159 @@
+name: Collectify cross-platform build
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Full 40-character commit SHA from sunycoder/Collectify
+        required: true
+        type: string
+      mode:
+        description: Verify builds without publishing, or publish approved releases
+        required: true
+        default: verify
+        type: choice
+        options: [verify, release, plugins]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: collectify-public-release
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Validate immutable source revision
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: node -e "if (!/^[a-f0-9]{40}$/.test(process.env.SOURCE_SHA)) process.exit(1)"
+
+  build:
+    if: inputs.mode != 'plugins'
+    needs: validate
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: windows
+            command: npm run dist:win -- --x64 --publish never
+          - os: macos-latest
+            platform: macos
+            command: npm run dist:mac -- --publish never
+          - os: ubuntu-latest
+            platform: linux
+            command: npm run dist:linux -- --publish never
+    runs-on: ${{ matrix.os }}
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: sunycoder/Collectify
+          ref: ${{ inputs.source_sha }}
+          token: ${{ secrets.SOURCE_READ_TOKEN }}
+          persist-credentials: false
+          path: source
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Install dependencies
+        working-directory: source
+        run: npm ci
+      - name: Configure public download addresses
+        run: node scripts/prepare-source.cjs source
+      - name: Check source and packages
+        working-directory: source
+        run: |
+          npm run defaults:check
+          npm run plugins:check
+          npm test
+      - name: Build installers
+        working-directory: source
+        run: ${{ matrix.command }}
+      - name: Verify packaged files
+        working-directory: source
+        run: node scripts/release-files.cjs verify
+      - name: Desktop regression
+        if: runner.os != 'Linux'
+        working-directory: source
+        run: |
+          npm run smoke
+          npm run smoke -- --smoke-performance
+          npm run smoke -- --smoke-auto-update
+      - name: Linux desktop regression
+        if: runner.os == 'Linux'
+        working-directory: source
+        run: |
+          sudo chown root:root node_modules/electron/dist/chrome-sandbox
+          sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
+          xvfb-run -a npm run smoke
+          xvfb-run -a npm run smoke -- --smoke-performance
+          xvfb-run -a npm run smoke -- --smoke-auto-update
+      - uses: actions/upload-artifact@v4
+        with:
+          name: collectify-${{ matrix.platform }}
+          retention-days: 1
+          if-no-files-found: error
+          path: |
+            source/dist/Collectify-*.exe
+            source/dist/Collectify-*.dmg
+            source/dist/Collectify-*.AppImage
+            source/dist/Collectify-*.deb
+
+  publish:
+    if: always() && needs.validate.result == 'success' && inputs.mode != 'verify' && (needs.build.result == 'success' || inputs.mode == 'plugins')
+    needs: [validate, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: sunycoder/Collectify
+          ref: ${{ inputs.source_sha }}
+          token: ${{ secrets.SOURCE_READ_TOKEN }}
+          persist-credentials: false
+          path: source
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - run: npm ci
+        working-directory: source
+      - run: node scripts/prepare-source.cjs source
+      - uses: actions/download-artifact@v4
+        if: inputs.mode == 'release'
+        with:
+          pattern: collectify-*
+          path: source/dist
+          merge-multiple: true
+      - name: Publish approved app
+        if: inputs.mode == 'release'
+        working-directory: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/release-files.cjs checksums
+          node scripts/publish-app.cjs
+      - name: Publish plugin assets
+        working-directory: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/publish-plugins.cjs
+      - name: Publish public catalog and download page
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_MODE: ${{ inputs.mode }}
+        run: node scripts/publish-index.cjs
